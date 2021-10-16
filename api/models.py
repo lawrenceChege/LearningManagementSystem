@@ -132,10 +132,10 @@ class StudentQuizAnswer(BaseModel):
     """
     enrolled_student = models.ForeignKey(QuizEnrollment, on_delete=models.CASCADE)
     quiz_question = models.ForeignKey(QuizQuestion, on_delete=models.CASCADE)
-    quiz_question_choice = models.ForeignKey(QuizQuestionChoice, on_delete=models.CASCADE)
+    answer = models.ForeignKey(QuizQuestionChoice, on_delete=models.CASCADE)
 
     def __str__(self):
-        return '%s %s' % (self.quiz_question.question, self.quiz_question_choice.choice)
+        return '%s %s' % (self.quiz_question.question, self.answer.choice)
 
     class Meta(object):
         verbose_name_plural = "Quiz Answers"

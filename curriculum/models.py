@@ -199,6 +199,7 @@ class Assignment(GenericBaseModel):
     unit = models.ForeignKey(Unit, on_delete=models.CASCADE, null=True, blank=True)
     chapter = models.ForeignKey(Chapter, on_delete=models.CASCADE, null=True, blank=True)
     due_date = models.DateTimeField()
+    questions = models.IntegerField(max_length=3, default=10)
 
     def __str__(self):
         return '%s %s' % (self.name, self.due_date)
