@@ -2,7 +2,7 @@
 	module for Eusers
 """
 
-from base.models import GenericBaseModel, State, BaseModel, SecurityQuestion
+from base.models import GenericBaseModel, State, BaseModel
 
 import unicodedata
 from django.contrib import auth
@@ -17,34 +17,12 @@ from django.db.models import Q
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.utils.crypto import salted_hmac
-from django.utils.encoding import  force_str
+from django.utils.encoding import force_str
 from django.utils.translation import gettext_lazy as _
 from django.contrib.auth.models import _user_get_permissions, _user_has_perm, _user_has_module_perms
-
 from django.utils import timezone
 
-from corporate.models import Branch, Corporate, CheckoffBranch
-from euser.backend.managers import EUserManager
-
-
-class Role(GenericBaseModel):
-	"""
-		model for roles
-	"""
-	corporate = models.ForeignKey(Corporate, on_delete=models.CASCADE, null=True, blank=True)
-	is_corporate_role = models.BooleanField(default=False)
-	is_service_provider_role = models.BooleanField(default=False)
-	is_super_admin_role = models.BooleanField(default=False)
-	state = models.ForeignKey(State, default=State.default_state, on_delete=models.CASCADE)
-
-	def __str__(self):
-		return "%s" % self.name
-
-	def __repr__(self):
-		return f'Role_name={self.name},Is_corporate_role={self.is_corporate_role},Is_service_provider_role={self.is_service_provider_role},Is_super_admin={self.is_super_admin_role}'
-
-	class Meta(object):
-		unique_together = ('name',)
+from users.managers.managers import EUserManager
 
 
 class Permission(GenericBaseModel):
@@ -53,8 +31,9 @@ class Permission(GenericBaseModel):
 	"""
 	parent = models.ForeignKey('self', blank=True, null=True, on_delete=models.CASCADE)
 	simple_name = models.TextField(max_length=255, blank=True, null=True)
-	extendable_by_corporate = models.BooleanField(default=False)
-	extendable_by_service_provider = models.BooleanField(default=False)
+	for_students = models.BooleanField(default=False)
+	for_teachers = models.BooleanField(default=False)
+	for_admin = models.BooleanField(default=False)
 	state = models.ForeignKey(State, default=State.default_state, on_delete=models.CASCADE)
 
 	def __str__(self):
@@ -68,25 +47,7 @@ class Permission(GenericBaseModel):
 		unique_together = ('name',)
 
 
-class RolePermission(BaseModel):
-	"""
-	This model maps different system roles with assigned permissions
-	"""
-	role = models.ForeignKey(Role, on_delete=models.CASCADE)
-	permission = models.ForeignKey(Permission, on_delete=models.CASCADE)
-	state = models.ForeignKey(State, default=State.default_state, on_delete=models.CASCADE)
-
-	def __str__(self):
-		return '%s %s' % (self.role.name, self.permission.name)
-
-	def __repr__(self):
-		return f'role_name = {self.role.name}, permission_name={self.permission.name}'
-
-	class Meta(object):
-		unique_together = ('role', 'permission')
-
-
-class EUserPassword(BaseModel):
+class UserPassword(BaseModel):
 	"""
 	This model manages the user credentials. i.e:
 		user(FK),password,state(FK)
@@ -107,7 +68,7 @@ class EUserPassword(BaseModel):
 
 
 # noinspection PyUnusedLocal
-@receiver(post_save, sender=EUserPassword)
+@receiver(post_save, sender=UserPassword)
 def hash_set_password(sender, instance, created, **kwargs):
 	"""
 		When the object is created, hash the password.
@@ -116,22 +77,6 @@ def hash_set_password(sender, instance, created, **kwargs):
 		instance.hashed_password = True
 		instance.password = make_password(instance.password)
 		instance.save()
-
-
-class EUserSecurityQuestion(BaseModel):
-	"""
-		This model manages the users' security questions and security_question answers
-	"""
-	euser = models.ForeignKey('EUser', related_name='user_questions',on_delete=models.CASCADE)
-	security_question = models.ForeignKey(SecurityQuestion, on_delete=models.CASCADE)
-	state = models.ForeignKey(State, default=State.default_state, on_delete=models.CASCADE)
-	answer_hash = models.CharField(max_length=255)
-
-	def __str__(self):
-		return '%s %s %s' % (self.euser, self.security_question, self.state)
-
-	class Meta(BaseModel.Meta):
-		ordering = ('-date_created',)
 
 
 class AbstractEUser(models.Model):
@@ -164,7 +109,7 @@ class AbstractEUser(models.Model):
 		self._password = None
 
 	def __str__(self):
-	language_code = models.CharField(max_length=5, default='en')
+		language_code = models.CharField(max_length=5, default='en')
 		return self.get_username()
 
 	def clean(self):
@@ -188,7 +133,7 @@ class AbstractEUser(models.Model):
 		Always return False. This is a way of comparing User objects to
 		anonymous users.
 		"""
-		return  False
+		return False
 
 	@property
 	def is_authenticated(self):
@@ -203,17 +148,7 @@ class AbstractEUser(models.Model):
 		"""Returns the most recent active password for the user or None"""
 		# noinspection PyBroadException
 		try:
-			return EUserPassword.objects.filter(euser=self, state__name='Active').order_by('-date_created').first()
-		except Exception as e:
-			return e
-
-	@property
-	def security_questions(self):
-		"""Returns the 3 most recent active security questions for the user or None"""
-		# noinspection PyBroadException
-		try:
-			return EUserSecurityQuestion.objects.filter(euser=self, state__name='Active').order_by(
-				'-date_created')[:3]  # Pick the most recent 3 active security questions.
+			return UserPassword.objects.filter(euser=self, state__name='Active').order_by('-date_created').first()
 		except Exception as e:
 			return e
 
@@ -226,66 +161,17 @@ class AbstractEUser(models.Model):
 		"""
 		try:
 			self.save()  # Save our current model
-			pass_update = EUserPassword.objects.create(
+			pass_update = UserPassword.objects.create(
 				euser=self, password=make_password(raw_password), state_id=State.default_state(), hashed_password
 				=True)
 			if pass_update is not None:
-				EUserPassword.objects.filter(
+				UserPassword.objects.filter(
 					~Q(pk=pass_update.pk), euser=self, state__name='Active').update(
 					state=State.disabled_state())
 			if pass_update is not None:
 				self._password = raw_password
 		except Exception as e:
 			print('Exception: %s' % e)
-
-	# noinspection PyBroadException
-	def set_security_question(self, security_question, answer):
-		"""
-			Sets the security question for the user. If the user has more than 3 active security questions, we
-			deactivate the others so that we remain with only 3 active security questions.
-			@param security_question: The security question we are setting.
-			@type security_question: SecurityQuestion
-			@param answer: The security question answer provided by the user.
-			@type answer: str
-			@return: The created e user security question or None on error.
-			@rtype: EUserSecurityQuestion | None
-		"""
-		try:
-			self.save()  # Save our current model
-			pass_update = EUserSecurityQuestion.objects.create(
-				euser=self, security_question=security_question, answer_hash=make_password(answer),
-				state_id=State.default_state())
-			if pass_update is not None:
-				EUserSecurityQuestion.objects.filter(
-					~Q(id__in=EUserSecurityQuestion.objects.filter(
-						state__name='Active').order_by('-date_created').values_list(
-						'id', flat=True)[:3])).update(state=State.disabled_state())
-				return pass_update
-		except Exception as e:
-			print('set_security_question Exception: %s' % e)
-		return None
-
-	# noinspection PyBroadException
-	def check_security_question(self, security_question, answer):
-		"""
-		Sets the security question for the user. If the user has more than 3 active security questions, we
-		deactivate the others so that we remain with only 3 active security questions.
-		@param security_question: The security question we are setting.
-		@type security_question: SecurityQuestion
-		@param answer: The security question answer provided by the user.
-		@type answer: str
-		@return: True if the answer is correct, False otherwise.
-		@rtype: bool
-		"""
-		try:
-			question = EUserSecurityQuestion.objects.filter(
-				euser=self, security_question=security_question, state__name='Active')
-			if question:
-				if check_password(answer, question.answer_hash):
-					return True
-		except Exception as e:
-			print('check_security_question Exception: %s' % e)
-		return False
 
 	def check_password(self, raw_password):
 		"""
@@ -351,16 +237,13 @@ class User(BaseModel, AbstractEUser):
 	phone_number = models.CharField(_('phone number'), max_length=20)
 	email = models.CharField(max_length=50)
 	security_code = models.CharField(max_length=150, null=True, blank=True)
-	state = models.ForeignKey(State, default=State.default_state,on_delete=models.CASCADE)
+	state = models.ForeignKey(State, default=State.default_state, on_delete=models.CASCADE)
 	is_active = models.BooleanField(_('active'), default=True, help_text='User is currently active.')
-	is_staff = models.BooleanField(_('staff'), default=False, help_text='User can login login to the dashboard.')
-	is_superuser = models.BooleanField(
-		_('super user'), default=False, help_text='User has full permissions on the admin dashboard.')
+	is_student = models.BooleanField(_('student'), default=False, help_text='User can login login to the dashboard.')
+	is_teacher = models.BooleanField(
+		_('teacher'), default=False, help_text='User has access to everything in a course/subject')
+	is_admin = models.BooleanField(_('admin'), default=False, help_text='User can set up the curriculum')
 	last_activity = models.DateTimeField(_('last activity'), null=True, blank=True, editable=False)
-	role = models.ForeignKey(
-		Role, related_name='roles', null=True, blank=True,
-		help_text='The role for the user belongs to. Cannot be null unless super user', on_delete=models.CASCADE)
-	# Only null if the user is a super user.
 	permissions = models.ManyToManyField(
 		Permission, through='ExtendedEUserPermission', blank=True, related_name="euser_set",
 		related_query_name="euser", help_text='Specific permissions for this user.')
@@ -376,7 +259,7 @@ class User(BaseModel, AbstractEUser):
 	objects = EUserManager()
 
 	def __str__(self):
-		return '%s %s - %s' % (self.branch, self.username, self.role)
+		return '%s %s - %s' % (self.email, self.username, self.phone_number)
 
 	def update_last_activity(self):
 		"""
@@ -385,51 +268,23 @@ class User(BaseModel, AbstractEUser):
 		self.last_activity = timezone.now()
 		self.save(update_fields=["last_activity"])
 
-	def clean(self):
-		"""
-			Custom validation for the fields.
-		"""
-		if (self.branch is None or self.role is None) and not self.is_superuser:
-			raise ValidationError('To clean, a user MUST have a role and branch!')
-		super(EUser, self).clean()
-
-	def save(self, *args, **kwargs):
-		"""
-			Override save method  to ensure valid Users have been saved.
-		"""
-		if (self.branch is None or self.role is None) and not self.is_superuser:
-			raise ValidationError('To save, a user MUST have a role and branch!')
-		super(EUser, self).save(*args, **kwargs)
-
 	def get_full_name(self):
 		"""
 			Retrieves the full name for the model
 		"""
 		return '%s - %s %s' % (self.username, self.first_name, self.last_name)
 
-	def get_short_name(self):
+	def get_user_name(self):
 		"""
 			Retrieves the short name for the user
 		"""
 		return str(self.username)
 
-	def get_group_permissions(self, obj=None):
-		"""
-			Returns a list of permission strings that this user has through their
-			groups. This method queries all available auth backends. If an object
-			is passed in, only permissions matching this object are returned.
-		"""
-		permissions = set()
-		for backend in auth.get_backends():
-			if hasattr(backend, "get_group_permissions"):
-				permissions.update(backend.get_group_permissions(self, obj))
-		return permissions
-
 	def get_all_permissions(self, obj=None):
 		"""
 			Get all permissions
 		"""
-		return _user_get_permissions(self, obj,from_name=None)
+		return _user_get_permissions(self, obj, from_name=None)
 
 	def has_perm(self, perm, obj=None):
 		"""
@@ -441,7 +296,7 @@ class User(BaseModel, AbstractEUser):
 		"""
 
 		# Active superusers have all permissions.
-		if self.is_active and self.is_superuser:
+		if self.is_active and self.is_admin:
 			return True
 
 		# Otherwise we need to check the backends.
@@ -461,7 +316,7 @@ class User(BaseModel, AbstractEUser):
 			Uses pretty much the same logic as has_perm, above.
 		"""
 		# Active superusers have all permissions.
-		if self.is_active and self.is_superuser:
+		if self.is_active and self.is_admin:
 			return True
 
 		return _user_has_module_perms(self, app_label)
@@ -469,3 +324,20 @@ class User(BaseModel, AbstractEUser):
 	class Meta(BaseModel.Meta):
 		unique_together = ('id',)
 
+
+class UserPermission(BaseModel):
+	"""
+	This model maps different system roles with assigned permissions
+	"""
+	user = models.ForeignKey(User, on_delete=models.CASCADE)
+	permission = models.ForeignKey(Permission, on_delete=models.CASCADE)
+	state = models.ForeignKey(State, default=State.default_state, on_delete=models.CASCADE)
+
+	def __str__(self):
+		return '%s %s' % (self.user.username, self.permission.name)
+
+	def __repr__(self):
+		return f'user_name = {self.user.username}, permission_name={self.permission.name}'
+
+	class Meta(object):
+		unique_together = ('role', 'permission')
