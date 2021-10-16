@@ -3,12 +3,25 @@ from django.utils import timezone
 from django.db import models
 
 
-class State(GenericBaseModel):
+class BaseModel(models.Model):
+    """
+    Define repetitive methods to enhance re-usability.
+    """
+    id = models.UUIDField(max_length=50, default=uuid.uuid4, unique=True, editable=False, primary_key=True)
+    date_modified = models.DateTimeField(auto_now=True)  # (default = timezone.now)
+    date_created = models.DateTimeField(auto_now_add=True)  # (default = timezone.now)
+
+    class Meta(object):
+        abstract = True
+
+
+class State(BaseModel):
     """
     States for objects lifecycle e.g. "Active", "Activation Pending", "Reversed", etc
     """
     name = models.CharField(max_length=35, null=False)
     description = models.TextField(max_length=255, blank=True, null=True)
+
     def __str__(self):
         return '%s' % self.name
 
@@ -43,27 +56,17 @@ class State(GenericBaseModel):
         return state
 
 
-class BaseModel(models.Model):
-    """
-    Define repetitive methods to enhance re-usability.
-    """
-    id = models.UUIDField(max_length=50, default=uuid.uuid4, unique=True, editable=False, primary_key=True)
-    date_modified = models.DateTimeField(auto_now=True)  # (default = timezone.now)
-    date_created = models.DateTimeField(auto_now_add=True)  # (default = timezone.now)
-    state = models.ForeignKey(State, on_delete=models.CASCADE)
-
-    class Meta(object):
-        abstract = True
-
 class GenericBaseModel(BaseModel):
     """
     Define repetitive methods to avoid cycles of redefining in every model.
     """
     name = models.CharField(max_length=35, null=False)
     description = models.TextField(max_length=255, blank=True, null=True)
+    state = models.ForeignKey(State, on_delete=models.CASCADE)
 
     class Meta(object):
         abstract = True
+
 
 class Grade(GenericBaseModel):
     """
@@ -75,6 +78,7 @@ class Grade(GenericBaseModel):
 
     class Meta(object):
         abstract = True
+
 
 class DurationType(GenericBaseModel):
     """
@@ -88,6 +92,7 @@ class DurationType(GenericBaseModel):
 
     class Meta(GenericBaseModel.Meta):
         unique_together = ('name', 'state')
+
 
 class Currency(GenericBaseModel):
     """
